@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1.0">
+        <title>Meows</title>
+    </head>
+<body>
+    <center>
+        <h1>Meows</h1>
+
+        <div style="width: 50%">
+            <form onsubmit="return sendMessage();">
+                <input type="text" width="100" id="input"/>
+            </form>
+            <div id="messages">
+            </div>
+        </div>
+
+    </center>
+
+    <script type="text/javascript">
+        <!--
+        function sendMessage() {
+            let msg = document.getElementById('input').value;
+            console.log(`Invoking send message for ${msg}`);
+            window.sock.send(msg);
+            document.getElementById('input').value = '';
+            return false;
+        }
+        window.wsDelay = 1000;
+        function connectSocket() {
+
+            const sock = new WebSocket("ws://127.0.0.1:8105/");
+            sock.onopen = (event) => {
+                // Reset our timeout interval
+                window.wsDelay = 10000;
+                console.log('WebSocket connected');
+            };
+
+            sock.onerror = (err) => {
+                console.error('WebSocket error, reconnecting..');
+
+                sock.close();
+            };
+
+            sock.onclose = (event) => {
+                console.log('WebSocket connection lost, reconnecting..');
+                setTimeout(() => {
+                    window.wsDelay = window.wsDelay * 2;
+                    console.log(`reconnection delay: ${window.wsDelay}`);
+                    connectSocket();
+                }, window.wsDelay);
+            }
+
+            sock.onmessage = (event) => {
+                console.log(`Received response: ${event.data}`);
+                const buffer = document.getElementById('messages');
+                buffer.insertBefore(document.createElement('br'), buffer.firstChild);
+                buffer.insertBefore(document.createTextElement(event.data), buffer.firstChild);
+            };
+            window.sock = sock;
+        }
+        connectSocket();
+        -->
+    </script>
+</body>
+</html>

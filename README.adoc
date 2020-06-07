@@ -1,0 +1,6 @@
+= Message Exchange Over Web Sockets 🐈
+
+
+This crate implements the simple pattern needed for implementing
+service-to-service message exchange over WebSocket connections
+
