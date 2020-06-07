@@ -1,6 +1,36 @@
 = Message Exchange Over Web Sockets 🐈
 
-
 This crate implements the simple pattern needed for implementing
-service-to-service message exchange over WebSocket connections
+service-to-service message exchange over WebSocket connections. Users of meows
+can handle typed JSON message with the option for a default handler for any
+un-typed messages.
+
+
+All messages intended to be handled must be wrapped in a meows appropriate
+envelope described below:
+
+.Envelope
+[source,json]
+----
+{
+    "type" : "ping",
+    "value" : {
+        "msg" : "Hey kitty kitty"
+    }
+}
+----
+
+Which would then be mapped to a struct such as:
+
+.Rust code
+[source,rust]
+----
+#[derive(Debug, Deserialize, Serialize)]
+struct Ping {
+    msg: String,
+}
+----
+
+In essence, anything that serde can deserialize, can be passed through meows.
+
 
