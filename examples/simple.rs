@@ -9,7 +9,6 @@ extern crate pretty_env_logger;
 #[macro_use]
 extern crate serde_derive;
 
-use async_tungstenite::WebSocketStream;
 use meows::*;
 use smol;
 
@@ -18,17 +17,21 @@ struct Ping {
     msg: String,
 }
 impl meows::Handler for Ping {
-    fn handle(real: Ping) -> Result<(), std::io::Error> {
+    fn handle(real: Ping) -> Option<Message> {
         info!("Ping handler: {:?}", real);
-        Ok(())
+        Some(Message::text("pong"))
     }
 }
 
+/**
+ * The Echo struct will act as the simple default handler for Meows which means
+ * anything that cannot be parsed properly will just be echoed back
+ */
 struct Echo;
 impl Echo {
-    async fn handle(message: String) -> Option<tungstenite::Message> {
+    async fn handle(message: String) -> Option<Message> {
         info!("Message received! {}", message);
-        Some(tungstenite::Message::text(message))
+        Some(Message::text(message))
     }
 }
 

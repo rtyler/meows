@@ -21,6 +21,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 
+/** Re-exporting for convenience */
+pub use tungstenite::Message;
+
 type DefaultDispatch = Arc<dyn Fn(String) -> BoxFuture<'static, Option<tungstenite::Message>> + Send + Sync>;
 
 
@@ -28,20 +31,20 @@ type DefaultDispatch = Arc<dyn Fn(String) -> BoxFuture<'static, Option<tungsteni
  * The internal mechanism for keeping track of message handlers
  */
 pub struct Registry {
-    dispatchers: HashMap<String, Dispatch>,
+    dispatchers: HashMap<String, Arc<Dispatch>>,
     default: Option<DefaultDispatch>,
 }
 impl Registry {
     /**
      * Insert a handler into the registry
      */
-    pub fn insert(&mut self, key: String, value: Dispatch) {
+    pub fn insert(&mut self, key: String, value: Arc<Dispatch>) {
         self.dispatchers.insert(key, value);
     }
     /**
      * Retrieve a registered handler
      */
-    pub fn get(&self, key: &String) -> Option<&Dispatch> {
+    pub fn get(&self, key: &String) -> Option<&Arc<Dispatch>> {
         self.dispatchers.get(key)
     }
     /**
@@ -72,7 +75,7 @@ macro_rules! meows {
     ($($e:expr), * => $($t:ty), *) => {
         $(
             meows::REGISTRY.lock().expect("Failed to unlock meows registry")
-                .insert($e.to_string(), meows::Dispatch::new(|v| { <$t>::handle_value::<$t>(v); }));
+                .insert($e.to_string(), std::sync::Arc::new(meows::Dispatch::new(|v| { <$t>::handle_value::<$t>(v) })));
         )*
     }
 }
@@ -120,20 +123,20 @@ pub struct Envelope {
  *
  * ```
  *  # #[macro_use] extern crate serde_derive; fn main() {
- *  use meows::Handler;
+ *  use meows::*;
  *
  *  #[derive(Debug, Deserialize, Serialize)]
  *  struct Hello {
  *      friend: String,
  *  }
  *  impl meows::Handler for Hello {
- *      fn handle(r: Self) -> Result<(), std::io::Error> {
+ *      fn handle(r: Self) -> Option<Message> {
  *          println!("Handling the hello for: {:?}", r);
- *          Ok(())
+ *          Some(Message::text("howdy stranger"))
  *      }
  *  }
  *  let value = serde_json::from_str(r#"{"friend":"ferris"}"#).unwrap();
- *  assert!(Hello::handle_value::<Hello>(value).is_ok());
+ *  assert!(Hello::handle_value::<Hello>(value).is_some());
  *  # }
  * ```
  */
@@ -151,17 +154,17 @@ pub trait Handler: Send + Sync {
      * Implementors should implement the handle function which will be invoked
      * with a deserialized/constructed version of the struct itself
      */
-    fn handle(r: Self) -> Result<(), std::io::Error>;
+    fn handle(r: Self) -> Option<Message>;
 
     /**
      * handle must be implemented by the trait implementer and should
      * do something novel with the value
      */
-    fn handle_value<T: Handler + DeserializeOwned>(v: serde_json::Value) -> Result<(), std::io::Error> {
+    fn handle_value<T: Handler + DeserializeOwned>(v: serde_json::Value) -> Option<Message> {
         if let Some(real) = T::convert(v) {
             return Handler::handle(real);
         }
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "oh no!"))
+        None
     }
 }
 
@@ -170,12 +173,12 @@ pub trait Handler: Send + Sync {
  * registry.
  */
 pub struct Dispatch {
-    f: Box<dyn Fn(serde_json::Value) + Send + Sync>,
+    f: Box<dyn Fn(serde_json::Value) -> Option<Message> + Send + Sync>,
 }
 impl Dispatch {
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(serde_json::Value) + 'static + Send + Sync,
+        F: Fn(serde_json::Value) -> Option<Message> + 'static + Send + Sync,
     {
         Self { f: Box::new(f) }
     }
@@ -215,8 +218,24 @@ impl Server {
                 Ok(message) => {
                     let message = message.to_string();
 
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&message) {
-                        debug!("Value deserialized: {}", value);
+                    if let Ok(envelope) = serde_json::from_str::<Envelope>(&message) {
+                        debug!("Envelope deserialized: {:?}", envelope);
+
+                        /*
+                         * This messing around with the values inside fo the registry are necessary
+                         * because the registry's mutexguard cannot be held across the awaits that
+                         * are below
+                         */
+                        let handler = match REGISTRY.lock().unwrap().get(&envelope.ttype) {
+                            Some(h) => Some(h.clone()),
+                            None => None,
+                        };
+
+                        if handler.is_some() {
+                            if let Some(response) = (handler.unwrap().f)(envelope.value) {
+                                stream.send(response).await;
+                            }
+                        }
                     }
                     else {
                         /*
