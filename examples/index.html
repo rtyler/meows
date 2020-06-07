@@ -57,7 +57,7 @@
                 console.log(`Received response: ${event.data}`);
                 const buffer = document.getElementById('messages');
                 buffer.insertBefore(document.createElement('br'), buffer.firstChild);
-                buffer.insertBefore(document.createTextElement(event.data), buffer.firstChild);
+                buffer.insertBefore(document.createTextNode(event.data), buffer.firstChild);
             };
             window.sock = sock;
         }

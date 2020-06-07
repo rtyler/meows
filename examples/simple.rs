@@ -10,10 +10,8 @@ extern crate pretty_env_logger;
 extern crate serde_derive;
 
 use async_tungstenite::WebSocketStream;
-use futures::prelude::*;
 use meows::*;
 use smol;
-use std::net::TcpStream;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Ping {
@@ -28,9 +26,9 @@ impl meows::Handler for Ping {
 
 struct Echo;
 impl Echo {
-    async fn handle(message: String) -> tungstenite::Message {
+    async fn handle(message: String) -> Option<tungstenite::Message> {
         info!("Message received! {}", message);
-        tungstenite::Message::text(message)
+        Some(tungstenite::Message::text(message))
     }
 }
 

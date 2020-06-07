@@ -11,7 +11,8 @@ extern crate serde_json;
 extern crate smol;
 
 use async_tungstenite::WebSocketStream;
-use futures::stream::*;
+use futures::future::BoxFuture;
+use futures::prelude::*;
 use log::*;
 use serde::de::DeserializeOwned;
 use smol::{Async, Task};
@@ -19,7 +20,9 @@ use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
-type DefaultDispatch = Arc<dyn Fn(String) -> (Box<dyn std::future::Future<Output=tungstenite::Message> + Unpin>) + Send + Sync>;
+
+type DefaultDispatch = Arc<dyn Fn(String) -> BoxFuture<'static, Option<tungstenite::Message>> + Send + Sync>;
+
 
 /**
  * The internal mechanism for keeping track of message handlers
@@ -80,8 +83,8 @@ macro_rules! default_meows {
     ($T:ty) => {
         meows::REGISTRY.lock().expect("Failed to unlock meows registry")
             .set_default(
-                Arc::new(
-                    |m| Box::new(<$T>::handle(m))
+                std::sync::Arc::new(
+                    |m| Box::pin(<$T>::handle(m))
                     )
             );
     }
@@ -226,7 +229,9 @@ impl Server {
                         };
 
                         if default.is_some() {
-                            (default.unwrap())(message).await;
+                            if let Some(response) = (default.unwrap())(message).await {
+                                stream.send(response).await;
+                            }
                         }
                     }
                 },
