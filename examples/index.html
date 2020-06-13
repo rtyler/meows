@@ -10,8 +10,9 @@
         <h1>Meows</h1>
 
         <div style="width: 50%">
+            <input type="button" value="Send ping" onclick="return sendPing();"/>
             <form onsubmit="return sendMessage();">
-                <input type="text" width="100" id="input"/>
+                <input placeholder="Enter a message to send" type="text" width="100" id="input"/>
             </form>
             <div id="messages">
             </div>
@@ -21,6 +22,16 @@
 
     <script type="text/javascript">
         <!--
+        function sendPing() {
+            let ping = {
+                type: "ping",
+                value: {
+                    msg: "this is a ping"
+                }
+            };
+            window.sock.send(JSON.stringify(ping));
+        }
+
         function sendMessage() {
             let msg = document.getElementById('input').value;
             console.log(`Invoking send message for ${msg}`);

@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 /** Re-exporting for convenience */
 pub use tungstenite::Message;
 
-type DefaultDispatch = Arc<dyn Fn(String) -> BoxFuture<'static, Option<tungstenite::Message>> + Send + Sync>;
+type DispatchFn = Arc<dyn Fn(String) -> BoxFuture<'static, Option<tungstenite::Message>> + Send + Sync>;
 
 
 /**
@@ -32,7 +32,7 @@ type DefaultDispatch = Arc<dyn Fn(String) -> BoxFuture<'static, Option<tungsteni
  */
 pub struct Registry {
     dispatchers: HashMap<String, Arc<Dispatch>>,
-    default: Option<DefaultDispatch>,
+    default: Option<DispatchFn>,
 }
 impl Registry {
     /**
@@ -50,7 +50,7 @@ impl Registry {
     /**
      * Set the default dispatch handler
      */
-    pub fn set_default(&mut self, handler: DefaultDispatch) {
+    pub fn set_default(&mut self, handler: DispatchFn) {
         self.default = Some(handler);
     }
 }
@@ -74,8 +74,15 @@ lazy_static! {
 macro_rules! meows {
     ($($e:expr), * => $($t:ty), *) => {
         $(
+            let closure = meows::Dispatch::new(|v| {
+                if let Ok(val) = serde_json::from_value::<$t>(v) {
+                    return <$t>::handle(val);
+                }
+                None
+            });
+
             meows::REGISTRY.lock().expect("Failed to unlock meows registry")
-                .insert($e.to_string(), std::sync::Arc::new(meows::Dispatch::new(|v| { <$t>::handle_value::<$t>(v) })));
+                .insert($e.to_string(), std::sync::Arc::new(closure));
         )*
     }
 }
@@ -115,58 +122,6 @@ pub struct Envelope {
     value: serde_json::Value,
 }
 
-/**
- * The Handler trait must be applied to any structs which are expected to
- * be deserialized and instantiated to handle an incoming message
- *
- * For example
- *
- * ```
- *  # #[macro_use] extern crate serde_derive; fn main() {
- *  use meows::*;
- *
- *  #[derive(Debug, Deserialize, Serialize)]
- *  struct Hello {
- *      friend: String,
- *  }
- *  impl meows::Handler for Hello {
- *      fn handle(r: Self) -> Option<Message> {
- *          println!("Handling the hello for: {:?}", r);
- *          Some(Message::text("howdy stranger"))
- *      }
- *  }
- *  let value = serde_json::from_str(r#"{"friend":"ferris"}"#).unwrap();
- *  assert!(Hello::handle_value::<Hello>(value).is_some());
- *  # }
- * ```
- */
-pub trait Handler: Send + Sync {
-    /**
-     * convert will take the given Value and attempt to convert it to the trait implementer's type
-     *
-     * If the conversion cannot be done properly, None will be returned
-     */
-    fn convert(v: serde_json::Value) -> Option<Self> where Self: std::marker::Sized + serde::de::DeserializeOwned {
-        serde_json::from_value::<Self>(v).map_or(None, |res| Some(res))
-    }
-
-    /**
-     * Implementors should implement the handle function which will be invoked
-     * with a deserialized/constructed version of the struct itself
-     */
-    fn handle(r: Self) -> Option<Message>;
-
-    /**
-     * handle must be implemented by the trait implementer and should
-     * do something novel with the value
-     */
-    fn handle_value<T: Handler + DeserializeOwned>(v: serde_json::Value) -> Option<Message> {
-        if let Some(real) = T::convert(v) {
-            return Handler::handle(real);
-        }
-        None
-    }
-}
 
 /**
  * Dispatch is a struct which exists solely to help Box some closures into the

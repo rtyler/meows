@@ -16,7 +16,7 @@ use smol;
 struct Ping {
     msg: String,
 }
-impl meows::Handler for Ping {
+impl Ping {
     fn handle(real: Ping) -> Option<Message> {
         info!("Ping handler: {:?}", real);
         Some(Message::text("pong"))
