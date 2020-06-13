@@ -23,34 +23,36 @@ use std::sync::{Arc, Mutex};
 
 /** Re-exporting for convenience */
 pub use tungstenite::Message;
+pub use serde_json::Value;
 
-type DispatchFn = Arc<dyn Fn(String) -> BoxFuture<'static, Option<tungstenite::Message>> + Send + Sync>;
+type DefaultDispatchFn = Arc<dyn Fn(String) -> BoxFuture<'static, Option<Message>> + Send + Sync>;
+type DispatchFn = Arc<dyn Fn(Value) -> BoxFuture<'static, Option<Message>> + Send + Sync>;
 
 
 /**
  * The internal mechanism for keeping track of message handlers
  */
 pub struct Registry {
-    dispatchers: HashMap<String, Arc<Dispatch>>,
-    default: Option<DispatchFn>,
+    dispatchers: HashMap<String, DispatchFn>,
+    default: Option<DefaultDispatchFn>,
 }
 impl Registry {
     /**
      * Insert a handler into the registry
      */
-    pub fn insert(&mut self, key: String, value: Arc<Dispatch>) {
+    pub fn insert(&mut self, key: String, value: DispatchFn) {
         self.dispatchers.insert(key, value);
     }
     /**
      * Retrieve a registered handler
      */
-    pub fn get(&self, key: &String) -> Option<&Arc<Dispatch>> {
+    pub fn get(&self, key: &String) -> Option<&DispatchFn> {
         self.dispatchers.get(key)
     }
     /**
      * Set the default dispatch handler
      */
-    pub fn set_default(&mut self, handler: DispatchFn) {
+    pub fn set_default(&mut self, handler: DefaultDispatchFn) {
         self.default = Some(handler);
     }
 }
@@ -74,15 +76,10 @@ lazy_static! {
 macro_rules! meows {
     ($($e:expr), * => $($t:ty), *) => {
         $(
-            let closure = meows::Dispatch::new(|v| {
-                if let Ok(val) = serde_json::from_value::<$t>(v) {
-                    return <$t>::handle(val);
-                }
-                None
-            });
-
             meows::REGISTRY.lock().expect("Failed to unlock meows registry")
-                .insert($e.to_string(), std::sync::Arc::new(closure));
+                .insert($e.to_string(),
+                    std::sync::Arc::new(|m| Box::pin(<$t>::handle(m)))
+                );
         )*
     }
 }
@@ -120,23 +117,6 @@ pub struct Envelope {
     #[serde(rename = "type")]
     ttype: String,
     value: serde_json::Value,
-}
-
-
-/**
- * Dispatch is a struct which exists solely to help Box some closures into the
- * registry.
- */
-pub struct Dispatch {
-    f: Box<dyn Fn(serde_json::Value) -> Option<Message> + Send + Sync>,
-}
-impl Dispatch {
-    pub fn new<F>(f: F) -> Self
-    where
-        F: Fn(serde_json::Value) -> Option<Message> + 'static + Send + Sync,
-    {
-        Self { f: Box::new(f) }
-    }
 }
 
 
@@ -187,7 +167,7 @@ impl Server {
                         };
 
                         if handler.is_some() {
-                            if let Some(response) = (handler.unwrap().f)(envelope.value) {
+                            if let Some(response) = (handler.unwrap())(envelope.value).await {
                                 stream.send(response).await;
                             }
                         }

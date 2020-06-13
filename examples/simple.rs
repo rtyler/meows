@@ -17,9 +17,14 @@ struct Ping {
     msg: String,
 }
 impl Ping {
-    fn handle(real: Ping) -> Option<Message> {
-        info!("Ping handler: {:?}", real);
-        Some(Message::text("pong"))
+    async fn handle(value: Value) -> Option<Message> {
+        if let Ok(real) = serde_json::from_value::<Self>(value) {
+            info!("Ping handler: {:?}", real);
+            Some(Message::text("pong"))
+        } else {
+            error!("Could not convert a message to a ping properly");;
+            None
+        }
     }
 }
 
