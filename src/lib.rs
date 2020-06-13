@@ -18,6 +18,7 @@ use serde::de::DeserializeOwned;
 use smol::{Async, Task};
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 
@@ -120,12 +121,31 @@ pub struct Envelope {
 }
 
 
+pub type AsyncMessage = Pin<Box<dyn Future<Output=Option<Message>> + Send>>;
+
+pub trait Handler<MessageType: DeserializeOwned, Output> {
+    fn invoke_with_value(value: serde_json::Value) -> Output {
+        if let Ok(real) = serde_json::from_value::<MessageType>(value) {
+            return Self::handle(Some(real));
+        }
+        Self::handle(None)
+    }
+    fn handle(message: Option<MessageType>) -> Output;
+}
+
 /**
  * The Server is the primary means of listening for messages
  */
-pub struct Server {
+pub struct Server<State> {
+    state: State,
 }
-impl Server {
+impl Server<()> {
+    pub fn new() -> Self {
+        Server {
+            state: (),
+        }
+    }
+
     pub async fn serve(&self, listen_on: String) -> Result<(), std::io::Error> {
         debug!("Starting to listen on: {}", &listen_on);
         let listener = Async::<TcpListener>::bind(listen_on)?;

@@ -9,6 +9,10 @@ extern crate pretty_env_logger;
 #[macro_use]
 extern crate serde_derive;
 
+use std::future::Future;
+use futures::future::FutureExt;
+use std::pin::Pin;
+
 use meows::*;
 use smol;
 
@@ -16,15 +20,29 @@ use smol;
 struct Ping {
     msg: String,
 }
-impl Ping {
-    async fn handle(value: Value) -> Option<Message> {
-        if let Ok(real) = serde_json::from_value::<Self>(value) {
-            info!("Ping handler: {:?}", real);
-            Some(Message::text("pong"))
-        } else {
-            error!("Could not convert a message to a ping properly");;
-            None
-        }
+
+async fn print_a_thing() {
+    info!("printing thing");
+}
+
+async fn handle_ping(ping: Ping) -> Option<Message> {
+    Some(Message::text("pong"))
+
+}
+
+struct PingHandler;
+impl Handler<Ping, AsyncMessage> for PingHandler {
+    fn handle(p: Option<Ping>) -> AsyncMessage {
+        async move {
+            if p.is_some() {
+                info!("Ping handler: {:?}", p);
+                print_a_thing().await;
+            }
+            else {
+                error!("Did not receive a properly formatted ping message");
+                None
+            }
+        }.boxed()
     }
 }
 
@@ -46,7 +64,9 @@ fn main() -> Result<(), std::io::Error> {
     meows!("ping" => Ping);
 
     println!("Starting simple ping/pong websocket server with meows");
-    let server = meows::Server { };
+    let server = meows::Server::new();
+
+    //server.on("ping", handle_ping);
 
     smol::run(async move {
         server.serve("127.0.0.1:8105".to_string()).await
