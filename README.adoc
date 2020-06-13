@@ -5,6 +5,10 @@ service-to-service message exchange over WebSocket connections. Users of meows
 can handle typed JSON message with the option for a default handler for any
 un-typed messages.
 
+Meows is built on top of link:https://github.com/stjepang/smol[smol] for async
+websocket handling behavior. This makes Meows compatible with other smol-based
+applications, including those using
+link:https://github.com/async-rs/async-std[async-std] 1.6.0 or later.
 
 All messages intended to be handled must be wrapped in a meows appropriate
 envelope described below:
@@ -20,7 +24,7 @@ envelope described below:
 }
 ----
 
-Which would then be mapped to a struct such as:
+Which will then be mapped to a struct such as:
 
 .Rust code
 [source,rust]
@@ -34,3 +38,53 @@ struct Ping {
 In essence, anything that serde can deserialize, can be passed through meows.
 
 
+== Example
+
+There are examples in the `examples/` directory, here's a simple message handler:
+
+.Meows Handler
+[source, rust]
+----
+#[derive(Debug, Deserialize, Serialize)]
+struct Ping {
+    msg: String,
+}
+impl Ping {
+    async fn handle(value: Value) -> Option<Message> {
+        if let Ok(real) = serde_json::from_value::<Self>(value) {
+            info!("Ping handler: {:?}", real);
+            Some(Message::text("pong"))
+        } else {
+            error!("Could not convert a message to a ping properly");;
+            None
+        }
+    }
+}
+----
+
+This can be plugged directly into a server with:
+
+.Meows Server
+[source,rust]
+----
+fn main() -> Result<(), std::io::Error> {
+    pretty_env_logger::init();
+    meows!("ping" => Ping);
+
+    info!("Starting simple ping/pong websocket server with meows");
+    let server = meows::Server {};
+
+    smol::run(async move {
+        server.serve("127.0.0.1:8105".to_string()).await
+    })
+}
+----
+
+
+== Contributing
+
+Meows is a typical Rust project, e.g. `cargo build` and `cargo test` will do
+most everything you would need to do.
+
+There aren't nearly enough tests, helping with that would certainly be
+appreciated :)
