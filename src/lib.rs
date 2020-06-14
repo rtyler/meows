@@ -195,8 +195,7 @@ impl<State: 'static + Send + Sync> Server<State> {
      *   let mut server = Server::new();
      *   smol::run(async move {
      *     server.serve("127.0.0.1:8105".to_string()).await
-     *   });
-     *   Ok(())
+     *   })
      * }
      * ```
      */
