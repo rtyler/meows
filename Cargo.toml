@@ -3,6 +3,7 @@ name = "meows"
 version = "0.1.0"
 authors = ["R. Tyler Croy <rtyler@brokenco.de>"]
 edition = "2018"
+description = "A simple pattern for async service messaging over WebSockets"
 homepage = "https://github.com/rtyler/meows"
 repository = "https://github.com/rtyler/meows"
 license = "GPL-3.0+"
