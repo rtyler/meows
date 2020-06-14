@@ -212,7 +212,8 @@ impl<ServerState: 'static + Send + Sync> Server<ServerState> {
                     let handlers = self.handlers.clone();
                     let default = self.default.clone();
                     Task::spawn(async move {
-                        Server::<ServerState>::handle_connection(state, default, handlers, ws).await;
+                        Server::<ServerState>::handle_connection(state, default, handlers, ws)
+                            .await;
                     })
                     .detach();
                 }
