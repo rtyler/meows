@@ -3,6 +3,10 @@ name = "meows"
 version = "0.1.0"
 authors = ["R. Tyler Croy <rtyler@brokenco.de>"]
 edition = "2018"
+homepage = "https://github.com/rtyler/meows"
+repository = "https://github.com/rtyler/meows"
+license = "GPL-3.0+"
+keywords = ["websocket", "async"]
 
 [dependencies]
 async-std = "~1.6.0"
