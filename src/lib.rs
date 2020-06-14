@@ -35,26 +35,41 @@ pub use serde_json::Value;
  *  }
  *  ```
  *  The contents of `value` can be completely arbitrary and are expected to be
- *  deserializable into whatever the `type` value string is , e.g. `Foo` in this 
+ *  deserializable into whatever the `type` value string is , e.g. `Foo` in this
  *  example.
  */
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Envelope {
     #[serde(rename = "type")]
-    ttype: String,
+    pub ttype: String,
     pub value: Value,
 }
 
+/**
+ * Support converting an Envelope directly into a String type
+ *
+ * ```
+ * use meows::Envelope;
+ *
+ * let e = Envelope { ttype: String::from("rust"), value: serde_json::Value::Null };
+ * let into: String = e.into();
+ * assert_eq!(r#"{"type":"rust","value":null}"#, into);
+ * ```
+ */
 impl Into<String> for Envelope {
     fn into(self) -> String {
-        serde_json::to_string(&self.value).expect("Curiosly failed to serialize an envelope")
+        serde_json::to_string(&self).expect("Curiosly failed to serialize an envelope")
     }
 }
 
+/**
+ * THe Request struct brings message specific information into the handlers
+ */
 pub struct Request<State> {
     pub env: Envelope,
     pub state: Arc<State>,
 }
+
 impl<State> Request<State> {
     pub fn from_value<ValueType: DeserializeOwned>(&mut self) -> Option<ValueType> {
         serde_json::from_value(self.env.value.take()).map_or(None, |v| Some(v))
@@ -110,12 +125,54 @@ pub struct Server<State> {
 }
 
 impl<State: 'static + Send + Sync> Server<State> {
+    /**
+     * Add a handler for a specific message type
+     *
+     * ```
+     * use meows::*;
+     * #[macro_use]
+     * extern crate serde_derive;
+     *
+     * #[derive(Debug, Deserialize, Serialize)]
+     * struct Ping {
+     *     msg: String,
+     * }
+     *
+     * async fn handle_ping(mut req: Request<()>) -> Option<Message> {
+     *   if let Some(ping) = req.from_value::<Ping>() {
+     *       println!("Ping received: {:?}", ping);
+     *   }
+     *   Some(Message::text("pong"))
+     * }
+     *
+     * # fn main() {
+     * let mut server = Server::new();
+     * server.on("ping", handle_ping);
+     * # }
+     * ```
+     */
     pub fn on(&mut self, message_type: &str, invoke: impl Endpoint<State>) {
         if let Ok(mut h) = self.handlers.write() {
             h.insert(message_type.to_owned(), Arc::new(Box::new(invoke)));
         }
     }
 
+    /**
+     * Set the default message handler, which will be invoked any time that a
+     * message is received that cannot be deserialized as a Meows Envelope
+     *
+     * ```
+     * use meows::*;
+     * use std::sync::Arc;
+     *
+     * async fn my_default(message: String, _state: Arc<()>) -> Option<Message> {
+     *   None
+     * }
+     *
+     * let mut server = Server::new();
+     * server.default(my_default);
+     * ```
+     */
     pub fn default(&mut self, invoke: impl DefaultEndpoint<State>) {
         self.default = Arc::new(Box::new(invoke));
     }
@@ -128,6 +185,23 @@ impl<State: 'static + Send + Sync> Server<State> {
         None
     }
 
+    /**
+     * The serve() function will listen for inbound webhook connections
+     *
+     *
+     * ```no_run
+     * use meows::*;
+     * use smol;
+     *
+     * fn main() -> Result<(), std::io::Error> {
+     *   let mut server = Server::new();
+     *   smol::run(async move {
+     *     server.serve("127.0.0.1:8105".to_string()).await
+     *   });
+     *   Ok(())
+     * }
+     * ```
+     */
     pub async fn serve(&self, listen_on: String) -> Result<(), std::io::Error> {
         debug!("Starting to listen on: {}", &listen_on);
         let listener = Async::<TcpListener>::bind(listen_on)?;
@@ -151,6 +225,10 @@ impl<State: 'static + Send + Sync> Server<State> {
         }
     }
 
+    /**
+     * Handle connection is invoked in its own task for each new WebSocket,
+     * from which it will read messages and invoke the appropriate handlers
+     */
     async fn handle_connection(state: Arc<State>,
         default: DefaultCallback<State>,
         handlers: Arc<RwLock<HashMap<String, Callback<State>>>>,
@@ -169,6 +247,7 @@ impl<State: 'static + Send + Sync> Server<State> {
                                 if let Some(handler) = h.get(&envelope.ttype) {
                                     Some(handler.clone())
                                 } else {
+                                    debug!("No handler found for message type: {}", envelope.ttype);
                                     None
                                 }
                             },
