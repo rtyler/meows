@@ -18,10 +18,9 @@ use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, RwLock};
 
+pub use serde_json::Value;
 /** Re-exporting for convenience */
 pub use tungstenite::Message;
-pub use serde_json::Value;
-
 
 /**
  * The Envelope handles the serialization/deserialization of the outer part of a
@@ -110,7 +109,6 @@ where
         Box::pin(fut)
     }
 }
-
 
 type Callback<State> = Arc<Box<dyn Endpoint<State>>>;
 type DefaultCallback<State> = Arc<Box<dyn DefaultEndpoint<State>>>;
@@ -216,8 +214,9 @@ impl<State: 'static + Send + Sync> Server<State> {
                     let default = self.default.clone();
                     Task::spawn(async move {
                         Server::<State>::handle_connection(state, default, handlers, ws).await;
-                    }).detach();
-                },
+                    })
+                    .detach();
+                }
                 Err(e) => {
                     error!("Failed to process WebSocket handshake: {}", e);
                 }
@@ -229,10 +228,12 @@ impl<State: 'static + Send + Sync> Server<State> {
      * Handle connection is invoked in its own task for each new WebSocket,
      * from which it will read messages and invoke the appropriate handlers
      */
-    async fn handle_connection(state: Arc<State>,
+    async fn handle_connection(
+        state: Arc<State>,
         default: DefaultCallback<State>,
         handlers: Arc<RwLock<HashMap<String, Callback<State>>>>,
-        mut stream: WebSocketStream<Async<TcpStream>>) -> Result<(), std::io::Error> {
+        mut stream: WebSocketStream<Async<TcpStream>>,
+    ) -> Result<(), std::io::Error> {
         while let Some(raw) = stream.next().await {
             trace!("WebSocket message received: {:?}", raw);
             match raw {
@@ -250,7 +251,7 @@ impl<State: 'static + Send + Sync> Server<State> {
                                     debug!("No handler found for message type: {}", envelope.ttype);
                                     None
                                 }
-                            },
+                            }
                             _ => None,
                         };
 
@@ -269,7 +270,7 @@ impl<State: 'static + Send + Sync> Server<State> {
                             stream.send(response).await;
                         }
                     }
-                },
+                }
                 Err(e) => {
                     error!("Error receiving message: {}", e);
                 }
@@ -288,7 +289,6 @@ impl Server<()> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
