@@ -123,6 +123,18 @@ pub struct Server<ServerState> {
 }
 
 impl<ServerState: 'static + Send + Sync> Server<ServerState> {
+
+    /**
+     * with_state will construct the Server with the given state object
+     */
+    pub fn with_state(state: ServerState) -> Self {
+        Server {
+            state: Arc::new(state),
+            handlers: Arc::new(RwLock::new(HashMap::default())),
+            default: Arc::new(Box::new(Server::<ServerState>::default_handler)),
+        }
+    }
+
     /**
      * Add a handler for a specific message type
      *
