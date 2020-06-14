@@ -4,8 +4,6 @@
  */
 
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
 extern crate smol;
@@ -18,85 +16,12 @@ use serde::de::DeserializeOwned;
 use smol::{Async, Task};
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-
+use std::sync::{Arc, RwLock};
 
 /** Re-exporting for convenience */
 pub use tungstenite::Message;
 pub use serde_json::Value;
 
-type DefaultDispatchFn = Arc<dyn Fn(String) -> BoxFuture<'static, Option<Message>> + Send + Sync>;
-type DispatchFn = Arc<dyn Fn(Value) -> BoxFuture<'static, Option<Message>> + Send + Sync>;
-
-
-/**
- * The internal mechanism for keeping track of message handlers
- */
-pub struct Registry {
-    dispatchers: HashMap<String, DispatchFn>,
-    default: Option<DefaultDispatchFn>,
-}
-impl Registry {
-    /**
-     * Insert a handler into the registry
-     */
-    pub fn insert(&mut self, key: String, value: DispatchFn) {
-        self.dispatchers.insert(key, value);
-    }
-    /**
-     * Retrieve a registered handler
-     */
-    pub fn get(&self, key: &String) -> Option<&DispatchFn> {
-        self.dispatchers.get(key)
-    }
-    /**
-     * Set the default dispatch handler
-     */
-    pub fn set_default(&mut self, handler: DefaultDispatchFn) {
-        self.default = Some(handler);
-    }
-}
-impl Default for Registry {
-    fn default() -> Registry {
-        Registry {
-            dispatchers: HashMap::new(),
-            default: None,
-        }
-    }
-}
-
-lazy_static! {
-    pub static ref REGISTRY: Arc<Mutex<Registry>> = {
-        Arc::new(Mutex::new(Registry::default()))
-    };
-}
-
-#[allow(unused_macros)]
-#[macro_export]
-macro_rules! meows {
-    ($($e:expr), * => $($t:ty), *) => {
-        $(
-            meows::REGISTRY.lock().expect("Failed to unlock meows registry")
-                .insert($e.to_string(),
-                    std::sync::Arc::new(|m| Box::pin(<$t>::handle(m)))
-                );
-        )*
-    }
-}
-
-#[allow(unused_macros)]
-#[macro_export]
-macro_rules! default_meows {
-    ($T:ty) => {
-        meows::REGISTRY.lock().expect("Failed to unlock meows registry")
-            .set_default(
-                std::sync::Arc::new(
-                    |m| Box::pin(<$T>::handle(m))
-                    )
-            );
-    }
-}
 
 /**
  * The Envelope handles the serialization/deserialization of the outer part of a
@@ -117,33 +42,90 @@ macro_rules! default_meows {
 pub struct Envelope {
     #[serde(rename = "type")]
     ttype: String,
-    value: serde_json::Value,
+    pub value: Value,
 }
 
-
-pub type AsyncMessage = Pin<Box<dyn Future<Output=Option<Message>> + Send>>;
-
-pub trait Handler<MessageType: DeserializeOwned, Output> {
-    fn invoke_with_value(value: serde_json::Value) -> Output {
-        if let Ok(real) = serde_json::from_value::<MessageType>(value) {
-            return Self::handle(Some(real));
-        }
-        Self::handle(None)
+impl Into<String> for Envelope {
+    fn into(self) -> String {
+        serde_json::to_string(&self.value).expect("Curiosly failed to serialize an envelope")
     }
-    fn handle(message: Option<MessageType>) -> Output;
 }
+
+pub struct Request<State> {
+    pub env: Envelope,
+    pub state: Arc<State>,
+}
+impl<State> Request<State> {
+    pub fn from_value<ValueType: DeserializeOwned>(&mut self) -> Option<ValueType> {
+        serde_json::from_value(self.env.value.take()).map_or(None, |v| Some(v))
+    }
+}
+
+/**
+ * Endpoint comes from tide, and I'm still not sure how this magic works
+ */
+pub trait Endpoint<State>: Send + Sync + 'static {
+    /// Invoke the endpoint within the given context
+    fn call<'a>(&'a self, req: Request<State>) -> BoxFuture<'a, Option<Message>>;
+}
+
+impl<State, F: Send + Sync + 'static, Fut> Endpoint<State> for F
+where
+    F: Fn(Request<State>) -> Fut,
+    Fut: Future<Output = Option<Message>> + Send + 'static,
+{
+    fn call<'a>(&'a self, req: Request<State>) -> BoxFuture<'a, Option<Message>> {
+        let fut = (self)(req);
+        Box::pin(fut)
+    }
+}
+
+pub trait DefaultEndpoint<State>: Send + Sync + 'static {
+    /// Invoke the endpoint within the given context
+    fn call<'a>(&'a self, msg: String, state: Arc<State>) -> BoxFuture<'a, Option<Message>>;
+}
+
+impl<State, F: Send + Sync + 'static, Fut> DefaultEndpoint<State> for F
+where
+    F: Fn(String, Arc<State>) -> Fut,
+    Fut: Future<Output = Option<Message>> + Send + 'static,
+{
+    fn call<'a>(&'a self, msg: String, state: Arc<State>) -> BoxFuture<'a, Option<Message>> {
+        let fut = (self)(msg, state);
+        Box::pin(fut)
+    }
+}
+
+
+type Callback<State> = Arc<Box<dyn Endpoint<State>>>;
+type DefaultCallback<State> = Arc<Box<dyn DefaultEndpoint<State>>>;
 
 /**
  * The Server is the primary means of listening for messages
  */
 pub struct Server<State> {
-    state: State,
+    state: Arc<State>,
+    handlers: Arc<RwLock<HashMap<String, Callback<State>>>>,
+    default: DefaultCallback<State>,
 }
-impl Server<()> {
-    pub fn new() -> Self {
-        Server {
-            state: (),
+
+impl<State: 'static + Send + Sync> Server<State> {
+    pub fn on(&mut self, message_type: &str, invoke: impl Endpoint<State>) {
+        if let Ok(mut h) = self.handlers.write() {
+            h.insert(message_type.to_owned(), Arc::new(Box::new(invoke)));
         }
+    }
+
+    pub fn default(&mut self, invoke: impl DefaultEndpoint<State>) {
+        self.default = Arc::new(Box::new(invoke));
+    }
+
+    /**
+     * Default handler which is used if the user doesn't specify a handler
+     * that should be used for messages Meows doesn't understand
+     */
+    async fn default_handler(_msg: String, _state: Arc<State>) -> Option<Message> {
+        None
     }
 
     pub async fn serve(&self, listen_on: String) -> Result<(), std::io::Error> {
@@ -155,8 +137,11 @@ impl Server<()> {
 
             match async_tungstenite::accept_async(stream).await {
                 Ok(ws) => {
+                    let state = self.state.clone();
+                    let handlers = self.handlers.clone();
+                    let default = self.default.clone();
                     Task::spawn(async move {
-                        Server::handle_connection(ws).await;
+                        Server::<State>::handle_connection(state, default, handlers, ws).await;
                     }).detach();
                 },
                 Err(e) => {
@@ -166,7 +151,10 @@ impl Server<()> {
         }
     }
 
-    async fn handle_connection(mut stream: WebSocketStream<Async<TcpStream>>) -> Result<(), std::io::Error> {
+    async fn handle_connection(state: Arc<State>,
+        default: DefaultCallback<State>,
+        handlers: Arc<RwLock<HashMap<String, Callback<State>>>>,
+        mut stream: WebSocketStream<Async<TcpStream>>) -> Result<(), std::io::Error> {
         while let Some(raw) = stream.next().await {
             trace!("WebSocket message received: {:?}", raw);
             match raw {
@@ -176,36 +164,30 @@ impl Server<()> {
                     if let Ok(envelope) = serde_json::from_str::<Envelope>(&message) {
                         debug!("Envelope deserialized: {:?}", envelope);
 
-                        /*
-                         * This messing around with the values inside fo the registry are necessary
-                         * because the registry's mutexguard cannot be held across the awaits that
-                         * are below
-                         */
-                        let handler = match REGISTRY.lock().unwrap().get(&envelope.ttype) {
-                            Some(h) => Some(h.clone()),
-                            None => None,
+                        let handler = match handlers.read() {
+                            Ok(h) => {
+                                if let Some(handler) = h.get(&envelope.ttype) {
+                                    Some(handler.clone())
+                                } else {
+                                    None
+                                }
+                            },
+                            _ => None,
                         };
 
-                        if handler.is_some() {
-                            if let Some(response) = (handler.unwrap())(envelope.value).await {
+                        if let Some(handler) = handler {
+                            let req = Request {
+                                env: envelope,
+                                state: state.clone(),
+                            };
+
+                            if let Some(response) = handler.call(req).await {
                                 stream.send(response).await;
                             }
                         }
-                    }
-                    else {
-                        /*
-                         * If we didn't have a specific handler, try to invoke the default handler
-                         * if it exists
-                         */
-                        let default = match &REGISTRY.lock().unwrap().default {
-                            Some(d) => Some(d.clone()),
-                            None => None,
-                        };
-
-                        if default.is_some() {
-                            if let Some(response) = (default.unwrap())(message).await {
-                                stream.send(response).await;
-                            }
+                    } else {
+                        if let Some(response) = default.call(message, state.clone()).await {
+                            stream.send(response).await;
                         }
                     }
                 },
@@ -215,6 +197,16 @@ impl Server<()> {
             }
         }
         Ok(())
+    }
+}
+
+impl Server<()> {
+    pub fn new() -> Self {
+        Server {
+            state: Arc::new(()),
+            handlers: Arc::new(RwLock::new(HashMap::default())),
+            default: Arc::new(Box::new(Server::<()>::default_handler)),
+        }
     }
 }
 
