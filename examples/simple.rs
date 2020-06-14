@@ -32,7 +32,7 @@ struct Ping {
 /**
  * Handle ping messages, just send a pong back
  */
-async fn handle_ping(mut req: Request<()>) -> Option<Message> {
+async fn handle_ping(mut req: Request<(), ()>) -> Option<Message> {
     if let Some(ping) = req.from_value::<Ping>() {
         info!("Ping received with message: {}", ping.msg);
     }

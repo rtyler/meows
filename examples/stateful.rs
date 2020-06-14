@@ -20,7 +20,7 @@ struct ServerState {
     secret: String,
 }
 
-async fn handle_ping(mut req: Request<ServerState>) -> Option<Message> {
+async fn handle_ping(mut req: Request<ServerState, ()>) -> Option<Message> {
     info!("My state secret is: {}", req.state.secret);
     if let Some(ping) = req.from_value::<Ping>() {
         info!("Ping received with message: {}", ping.msg);

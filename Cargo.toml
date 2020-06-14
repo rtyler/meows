@@ -1,6 +1,6 @@
 [package]
 name = "meows"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["R. Tyler Croy <rtyler@brokenco.de>"]
 edition = "2018"
 description = "A simple pattern for async service messaging over WebSockets"
