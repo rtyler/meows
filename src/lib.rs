@@ -64,12 +64,12 @@ impl Into<String> for Envelope {
 /**
  * THe Request struct brings message specific information into the handlers
  */
-pub struct Request<State> {
+pub struct Request<ServerState> {
     pub env: Envelope,
-    pub state: Arc<State>,
+    pub state: Arc<ServerState>,
 }
 
-impl<State> Request<State> {
+impl<ServerState> Request<ServerState> {
     pub fn from_value<ValueType: DeserializeOwned>(&mut self) -> Option<ValueType> {
         serde_json::from_value(self.env.value.take()).map_or(None, |v| Some(v))
     }
@@ -78,51 +78,51 @@ impl<State> Request<State> {
 /**
  * Endpoint comes from tide, and I'm still not sure how this magic works
  */
-pub trait Endpoint<State>: Send + Sync + 'static {
+pub trait Endpoint<ServerState>: Send + Sync + 'static {
     /// Invoke the endpoint within the given context
-    fn call<'a>(&'a self, req: Request<State>) -> BoxFuture<'a, Option<Message>>;
+    fn call<'a>(&'a self, req: Request<ServerState>) -> BoxFuture<'a, Option<Message>>;
 }
 
-impl<State, F: Send + Sync + 'static, Fut> Endpoint<State> for F
+impl<ServerState, F: Send + Sync + 'static, Fut> Endpoint<ServerState> for F
 where
-    F: Fn(Request<State>) -> Fut,
+    F: Fn(Request<ServerState>) -> Fut,
     Fut: Future<Output = Option<Message>> + Send + 'static,
 {
-    fn call<'a>(&'a self, req: Request<State>) -> BoxFuture<'a, Option<Message>> {
+    fn call<'a>(&'a self, req: Request<ServerState>) -> BoxFuture<'a, Option<Message>> {
         let fut = (self)(req);
         Box::pin(fut)
     }
 }
 
-pub trait DefaultEndpoint<State>: Send + Sync + 'static {
+pub trait DefaultEndpoint<ServerState>: Send + Sync + 'static {
     /// Invoke the endpoint within the given context
-    fn call<'a>(&'a self, msg: String, state: Arc<State>) -> BoxFuture<'a, Option<Message>>;
+    fn call<'a>(&'a self, msg: String, state: Arc<ServerState>) -> BoxFuture<'a, Option<Message>>;
 }
 
-impl<State, F: Send + Sync + 'static, Fut> DefaultEndpoint<State> for F
+impl<ServerState, F: Send + Sync + 'static, Fut> DefaultEndpoint<ServerState> for F
 where
-    F: Fn(String, Arc<State>) -> Fut,
+    F: Fn(String, Arc<ServerState>) -> Fut,
     Fut: Future<Output = Option<Message>> + Send + 'static,
 {
-    fn call<'a>(&'a self, msg: String, state: Arc<State>) -> BoxFuture<'a, Option<Message>> {
+    fn call<'a>(&'a self, msg: String, state: Arc<ServerState>) -> BoxFuture<'a, Option<Message>> {
         let fut = (self)(msg, state);
         Box::pin(fut)
     }
 }
 
-type Callback<State> = Arc<Box<dyn Endpoint<State>>>;
-type DefaultCallback<State> = Arc<Box<dyn DefaultEndpoint<State>>>;
+type Callback<ServerState> = Arc<Box<dyn Endpoint<ServerState>>>;
+type DefaultCallback<ServerState> = Arc<Box<dyn DefaultEndpoint<ServerState>>>;
 
 /**
  * The Server is the primary means of listening for messages
  */
-pub struct Server<State> {
-    state: Arc<State>,
-    handlers: Arc<RwLock<HashMap<String, Callback<State>>>>,
-    default: DefaultCallback<State>,
+pub struct Server<ServerState> {
+    state: Arc<ServerState>,
+    handlers: Arc<RwLock<HashMap<String, Callback<ServerState>>>>,
+    default: DefaultCallback<ServerState>,
 }
 
-impl<State: 'static + Send + Sync> Server<State> {
+impl<ServerState: 'static + Send + Sync> Server<ServerState> {
     /**
      * Add a handler for a specific message type
      *
@@ -149,7 +149,7 @@ impl<State: 'static + Send + Sync> Server<State> {
      * # }
      * ```
      */
-    pub fn on(&mut self, message_type: &str, invoke: impl Endpoint<State>) {
+    pub fn on(&mut self, message_type: &str, invoke: impl Endpoint<ServerState>) {
         if let Ok(mut h) = self.handlers.write() {
             h.insert(message_type.to_owned(), Arc::new(Box::new(invoke)));
         }
@@ -171,7 +171,7 @@ impl<State: 'static + Send + Sync> Server<State> {
      * server.default(my_default);
      * ```
      */
-    pub fn default(&mut self, invoke: impl DefaultEndpoint<State>) {
+    pub fn default(&mut self, invoke: impl DefaultEndpoint<ServerState>) {
         self.default = Arc::new(Box::new(invoke));
     }
 
@@ -179,7 +179,7 @@ impl<State: 'static + Send + Sync> Server<State> {
      * Default handler which is used if the user doesn't specify a handler
      * that should be used for messages Meows doesn't understand
      */
-    async fn default_handler(_msg: String, _state: Arc<State>) -> Option<Message> {
+    async fn default_handler(_msg: String, _state: Arc<ServerState>) -> Option<Message> {
         None
     }
 
@@ -212,7 +212,7 @@ impl<State: 'static + Send + Sync> Server<State> {
                     let handlers = self.handlers.clone();
                     let default = self.default.clone();
                     Task::spawn(async move {
-                        Server::<State>::handle_connection(state, default, handlers, ws).await;
+                        Server::<ServerState>::handle_connection(state, default, handlers, ws).await;
                     })
                     .detach();
                 }
@@ -228,9 +228,9 @@ impl<State: 'static + Send + Sync> Server<State> {
      * from which it will read messages and invoke the appropriate handlers
      */
     async fn handle_connection(
-        state: Arc<State>,
-        default: DefaultCallback<State>,
-        handlers: Arc<RwLock<HashMap<String, Callback<State>>>>,
+        state: Arc<ServerState>,
+        default: DefaultCallback<ServerState>,
+        handlers: Arc<RwLock<HashMap<String, Callback<ServerState>>>>,
         mut stream: WebSocketStream<Async<TcpStream>>,
     ) -> Result<(), std::io::Error> {
         while let Some(raw) = stream.next().await {
