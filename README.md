@@ -5,10 +5,10 @@ service-to-service message exchange over WebSocket connections. Users of meows
 can handle typed JSON message with the option for a default handler for any
 un-typed messages.
 
-Meows is built on top of link:https://github.com/stjepang/smol[smol] for async
+Meows is built on top of [smol](https://github.com/stjepang/smol) for async
 websocket handling behavior. This makes Meows compatible with other smol-based
 applications, including those using
-link:https://github.com/async-rs/async-std[async-std] 1.6.0 or later.
+[async-std](https://github.com/async-rs/async-std) 1.6.0 or later.
 
 All messages intended to be handled must be wrapped in a meows appropriate
 envelope described below:
