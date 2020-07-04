@@ -68,6 +68,7 @@ pub struct Request<ServerState, ClientState> {
     pub env: Envelope,
     pub state: Arc<ServerState>,
     pub client_state: Arc<RwLock<ClientState>>,
+    pub sink: async_channel::Sender<Message>,
 }
 
 impl<ServerState, ClientState> Request<ServerState, ClientState> {
@@ -245,17 +246,40 @@ impl<ServerState: 'static + Send + Sync, ClientState: 'static + Default + Send +
         state: Arc<ServerState>,
         default: DefaultCallback<ServerState, ClientState>,
         handlers: Arc<RwLock<HashMap<String, Callback<ServerState, ClientState>>>>,
-        mut stream: WebSocketStream<Async<TcpStream>>,
+        stream: WebSocketStream<Async<TcpStream>>,
     ) -> Result<(), std::io::Error> {
 
         let client_state = Arc::new(RwLock::new(ClientState::default()));
 
-        while let Some(raw) = stream.next().await {
+        /*
+         * The WebSocketStream must be split into the reader and writer since
+         * Meows intentionally decouples reading from writing.
+         *
+         * This allows for passing a handler an channel sink with which it can
+         * send _multiple_ messages, not just the Message returned by the handler
+         * function itself.
+         */
+        let (mut writer, mut reader) = stream.split();
+        let (channel_tx, channel_rx) = async_channel::unbounded::<Message>();
+
+        Task::spawn(async move {
+            while let Ok(outgoing) = channel_rx.recv().await {
+                trace!("Must send {:?} to the socket", outgoing);
+                writer.send(outgoing).await;
+            }
+            trace!("Writer task closing for a socket");
+        }).detach();
+
+        while let Some(raw) = reader.next().await {
             let client_state = client_state.clone();
 
             trace!("WebSocket message received: {:?}", raw);
             match raw {
                 Ok(message) => {
+                    if message.is_close() {
+                        debug!("The client has closed the connection, gracefully meowing out");
+                        break;
+                    }
                     let message = message.to_string();
 
                     if let Ok(envelope) = serde_json::from_str::<Envelope>(&message) {
@@ -278,15 +302,16 @@ impl<ServerState: 'static + Send + Sync, ClientState: 'static + Default + Send +
                                 env: envelope,
                                 state: state.clone(),
                                 client_state: client_state.clone(),
+                                sink: channel_tx.clone(),
                             };
 
                             if let Some(response) = handler.call(req).await {
-                                stream.send(response).await;
+                                channel_tx.send(response).await;
                             }
                         }
                     } else {
                         if let Some(response) = default.call(message, state.clone()).await {
-                            stream.send(response).await;
+                            channel_tx.send(response).await;
                         }
                     }
                 }
