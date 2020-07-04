@@ -267,6 +267,7 @@ impl<ServerState: 'static + Send + Sync, ClientState: 'static + Default + Send +
                 trace!("Must send {:?} to the socket", outgoing);
                 writer.send(outgoing).await;
             }
+            trace!("Writer task closing for a socket");
         }).detach();
 
         while let Some(raw) = reader.next().await {
@@ -275,6 +276,10 @@ impl<ServerState: 'static + Send + Sync, ClientState: 'static + Default + Send +
             trace!("WebSocket message received: {:?}", raw);
             match raw {
                 Ok(message) => {
+                    if message.is_close() {
+                        debug!("The client has closed the connection, gracefully meowing out");
+                        break;
+                    }
                     let message = message.to_string();
 
                     if let Ok(envelope) = serde_json::from_str::<Envelope>(&message) {
