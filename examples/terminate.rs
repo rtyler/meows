@@ -1,40 +1,17 @@
 /**
- * The multisend example demonstrates how the server can send multiple responses
- * for a single inbound message
+ * This example demonstrates terminating the server from another task or thread
+ * inside the same process
  */
 
 #[macro_use]
 extern crate meows;
 extern crate pretty_env_logger;
-#[macro_use]
-extern crate serde_derive;
 
 use futures::sink::SinkExt;
 use meows::*;
 use smol;
+use std::time::Duration;
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Ping {
-    msg: String,
-}
-
-/**
- * Handle ping messages, just send a pong back
- */
-async fn handle_ping(mut req: Request<(), ()>) -> Option<Message> {
-    if let Some(ping) = req.from_value::<Ping>() {
-        info!("Ping received with message: {}", ping.msg);
-
-        for i in 1..5_u64 {
-            req.sink.send(
-                Message::text(format!("pong {}", i))
-            ).await;
-
-        }
-    }
-    None
-}
 
 /**
  * The default handler for unknown strings is to do nothing,
@@ -51,11 +28,20 @@ async fn default_echo(message: String, _state: Arc<()>) -> Option<Message> {
 fn main() -> Result<(), std::io::Error> {
     pretty_env_logger::init();
 
+
     println!("Starting simple ping/pong websocket server with meows");
     let mut server = meows::Server::new();
-
     server.default(default_echo);
-    server.on("ping", handle_ping);
+    let mut controller = server.get_control_channel();
+
+    smol::Task::spawn(async move {
+        info!("Counting to three, then you have to go to your room mister!");
+        for _ in 1..10 {
+            let dur = Duration::from_secs(1);
+            smol::Timer::after(dur).await;
+        }
+        controller.send(Control::Terminate).await;
+    }).detach();
 
     smol::run(async move { server.serve("127.0.0.1:8105".to_string()).await })
 }
