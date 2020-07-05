@@ -349,6 +349,7 @@ impl<ServerState: 'static + Send + Sync, ClientState: 'static + Default + Send +
                         break;
                     }
                     let message = message.to_string();
+                    let mut invoke_default = false;
 
                     if let Ok(envelope) = serde_json::from_str::<Envelope>(&message) {
                         debug!("Envelope deserialized: {:?}", envelope);
@@ -359,6 +360,7 @@ impl<ServerState: 'static + Send + Sync, ClientState: 'static + Default + Send +
                                     Some(handler.clone())
                                 } else {
                                     debug!("No handler found for message type: {}", envelope.ttype);
+                                    invoke_default = true;
                                     None
                                 }
                             }
@@ -378,6 +380,10 @@ impl<ServerState: 'static + Send + Sync, ClientState: 'static + Default + Send +
                             }
                         }
                     } else {
+                        invoke_default = true;
+                    }
+
+                    if invoke_default {
                         if let Some(response) = default.call(message, state.clone()).await {
                             channel_tx.send(response).await;
                         }
